@@ -4,6 +4,7 @@
 
 - **対象機能**: F-01 VPC 内リソース列挙  
 - **目的**: 指定された `--vpc-id`, `--region`（および `--profile`）を用いて、対象 VPC 内の AWS リソースを網羅的かつ効率的に列挙し、内部共通リソースモデルに渡すための生データを取得する。  
+  - 併せて、**それら VPC 内リソースから参照されている外部マネージドサービス（IAM ロール / ポリシー、S3 バケット等）を「関連リソース」として特定するための情報**を収集する。  
 - **タスク優先度**: 1（最優先。後続の全機能の前提）
 
 本機能は `pkg/aws.VpcDiscoveryService` を中心とした AWS SDK v2 を用いたリソース走査ロジックで構成される。
@@ -97,6 +98,7 @@ type awsVpcDiscoveryService struct {
    7. ALB/NLB 列挙（`DescribeLoadBalancers` 等）
    8. RDS インスタンス列挙（`DescribeDBInstances`）
 4. 取得結果を内部 `Resource` / `Relation` に変換して返却。
+5. VPC 内で検出したリソースの属性から、後続フェーズ（IAM/S3 取得）で利用するための参照情報（IAM ARN, S3 バケット名等）を収集する。
 
 #### 5.1.1 対象リソースのスコープ
 
@@ -104,10 +106,27 @@ type awsVpcDiscoveryService struct {
   - 例: サブネット / ルートテーブル / IGW / NATGW / セキュリティグループ / ENI  
   - EC2 / ALB / NLB / RDS  
   - ECS / EKS / ElastiCache / CodeBuild / Lambda (VPC 接続) など、ENI を介して VPC 内に配置されるマネージドサービス
-- 一方で、CloudFront・S3・Route53 などの **「VPC 外部に存在するグローバル／リージョナルサービス」** は本 CLI の対象外とする。
+- 一方で、CloudFront・Route53 などの **「VPC 外部に存在するグローバル／リージョナルサービス」** は本 CLI の直接の列挙対象外とする。
+- ただし、**VPC 内リソースから参照されている IAM / S3 等の外部マネージドサービスは、「関連リソース」として import 対象になり得る**ため、F-01 ではそれらを特定するための参照情報（ARN, バケット名など）を必ず保持する。
 - 全 AWS サービスの網羅的列挙は現実的ではないため、実装上は以下の方針を取る:
   - VPC 内リソースはサービスごとに `ListXXX` を追加実装しつつ、`Resource` / `Relation` モデルはサービス非依存で扱えるようにする。
   - 新しい VPC 内サービスに対応する際も、`AwsVpcDiscoveryService` のメソッド追加とマッピング・HCL テンプレート追加で拡張できる。
+
+### 5.3 関連マネージドサービス（IAM / S3）向けの情報収集方針
+
+- **IAM 関連**
+  - VPC 内リソースのうち、以下のように IAM ロール／ポリシーを参照するものについて、対応する ARN を収集する:
+    - EC2: インスタンスプロファイル → IAM ロール
+    - ECS/EKS: タスクロール／実行ロール
+    - Lambda: 関数ロール
+    - CodeBuild: `serviceRole`
+  - 収集した ARN は F-02 以降で IAM リソースを import 対象として扱う際の入力となる。
+- **S3 関連**
+  - 初期フェーズでは特に CodeBuild にフォーカスし、以下の項目から S3 バケット名を抽出する:
+    - `artifacts.location`
+    - `cache.location`
+  - 将来的には ALB/NLB アクセスログ、CloudTrail ログ等の S3 バケットも対象とする余地を残すが、初期実装では CodeBuild 由来の S3 バケットに限定する。
+
 
 ### 5.2 並列化・ページング戦略
 

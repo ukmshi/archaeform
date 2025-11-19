@@ -4,6 +4,7 @@
 
 - **対象機能**: F-02 内部抽象リソースモデルへのマッピング  
 - **目的**: F-01 で取得した AWS リソース情報を、クラウド共通で利用可能な `Resource` / `Relation` モデルへ変換し、後続の HCL 生成・競合検出・import スクリプト生成で再利用可能な形にする。  
+  - ここには、**VPC 内リソースに論理的に関連する外部マネージドサービス（IAM ロール / ポリシー、S3 バケット等）のモデル化も含まれる**。
 - **タスク優先度**: 2
 
 ## 2. 対象コンポーネント
@@ -74,6 +75,15 @@ func (m *AwsToResourceMapper) MapInstance(instances []rawInstance) ([]Resource, 
   - HCL 生成に必要となるフィールドのみを抽出し格納。
   - 例: `{"cidr_block": "...", "availability_zone": "..."}` など。
 
+### 5.1.1 Relation.Kind の分類方針
+
+- `kind` は後続の HCL 生成で参照解決や依存関係制御に用いる。
+- 初期フェーズでは以下の分類を用いる:
+  - `"network"`: ネットワーク的な所属／接続関係（サブネット → VPC、ENI → サブネット 等）
+  - `"security"`: セキュリティ関連（インスタンス → セキュリティグループ 等）
+  - `"iam"`: IAM ロール／ポリシーとの論理関連（CodeBuild プロジェクト → IAM ロール 等）
+  - `"storage"`: S3 等ストレージとの論理関連（CodeBuild プロジェクト → S3 バケット 等）
+
 ### 5.2 リソース種別ごとの例
 
 #### Subnet
@@ -95,6 +105,23 @@ func (m *AwsToResourceMapper) MapInstance(instances []rawInstance) ([]Resource, 
   - インスタンス -> サブネット: `kind: "network"`
   - インスタンス -> セキュリティグループ: `kind: "security"`
 
+#### IAM Role / Policy（関連リソース）
+
+- `Type`: `"aws_iam_role"`, `"aws_iam_role_policy"`, `"aws_iam_role_policy_attachment"` など
+- 主な `Attributes`（例: `aws_iam_role`）:
+  - `name`, `assume_role_policy`, `tags`
+- `Relation`:
+  - VPC 内リソース（EC2, ECS/EKS, Lambda, CodeBuild 等）から IAM ロールへの関連を `kind: "iam"` として表現。
+  - ロールとポリシー（インライン／マネージド）間の関連も必要に応じて `kind: "iam"` で表現。
+
+#### S3 Bucket（関連リソース）
+
+- `Type`: `"aws_s3_bucket"`
+- 主な `Attributes`:
+  - `bucket`, `acl`, `tags`, 必要に応じてバージョニングや暗号化設定など
+- `Relation`:
+  - CodeBuild プロジェクトなど、VPC 内リソースから S3 バケットへの論理関連を `kind: "storage"` として表現。
+
 ## 6. 名前生成戦略 (`NameGenerator`)
 
 Terraform のリソース論理名は HCL 上の可読性に大きく影響するため、専用の名前生成コンポーネントを設ける。
@@ -114,8 +141,9 @@ type NameGenerator interface {
 
 1. F-01 から受け取った各種中間構造体（または AWS SDK レスポンス）を入力として受け取る。
 2. リソース種別ごとに対応する `MapXXX` 関数を呼び出し、`[]Resource` / `[]Relation` を構築。
-3. 全リソース分をマージし、重複しない `ID` を保証する。
-4. マッピング中にエラーがあった場合、
+3. VPC 内リソースから参照されている IAM ARN, S3 バケット名等の情報を用いて、関連 IAM / S3 リソース用の `Resource` / `Relation` も生成する。
+4. 全リソース分をマージし、重複しない `ID` を保証する。
+5. マッピング中にエラーがあった場合、
    - 個別リソースの変換失敗は WARN ログ出力の上でスキップ。
    - 構造的に致命的な不整合（例: VPC が存在しないのにサブネットだけがある）は全体エラーとして扱う。
 

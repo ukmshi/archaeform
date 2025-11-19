@@ -4,6 +4,7 @@
 
 - **対象機能**: F-03 Terraform HCL ファイル生成  
 - **目的**: F-02 で生成された内部 `Resource` / `Relation` モデルをもとに、Terraform の `*.tf` ファイルを所定ディレクトリに生成する。  
+  - ここには、VPC 内リソースだけでなく、**それらに論理的に紐づく IAM ロール / ポリシー、S3 バケット等の関連リソースの HCL 生成**も含まれる。
 - **タスク優先度**: 3
 
 ## 2. 対象コンポーネント
@@ -36,7 +37,7 @@ const (
 - デフォルト出力先:
   - `outputRoot := cfg.OutputDir` が空なら `filepath.Join(cfg.TfDir, "generated")`
 - ファイル命名（SplitByType の場合）:
-  - `aws_instance.tf`, `aws_subnet.tf` のように `Type` ごとに 1 ファイル。
+  - `aws_instance.tf`, `aws_subnet.tf`, `aws_iam_role.tf`, `aws_s3_bucket.tf` のように `Type` ごとに 1 ファイル。
 - リソースブロック命名:
   - `resource "<type>" "<name>" { ... }`
   - `<name>` は `Resource.Name` を利用。
@@ -71,11 +72,26 @@ resource "aws_instance" "web_1" {
 - `Relations` を参照して、他リソースへの参照（`aws_subnet.xxx.id` など）を解決する。
   - 参照名は `Relation.To` に紐づく `Resource.Name` を利用。
 
+#### 5.1.1 IAM / S3 等関連リソースの HCL 生成
+
+- IAM ロール（`aws_iam_role`）:
+  - `Resource.Attributes` から `name`, `assume_role_policy`, `tags` 等を展開する。
+  - インラインポリシーがある場合は `aws_iam_role_policy` を別リソースとして生成し、`role` にロール名を設定。
+  - マネージドポリシーは `aws_iam_role_policy_attachment` として生成し、`policy_arn` を設定。
+- S3 バケット（`aws_s3_bucket`）:
+  - `bucket` 名、`tags` 等を展開し、必要に応じてバージョニングや暗号化設定を付与（初期フェーズでは最小限の再現にとどめる）。
+- CodeBuild 等の VPC 内サービスで IAM / S3 を参照している場合:
+  - `Relation.Kind == "iam"` / `"storage"` を参照して、`serviceRole` や `artifacts.location` などのフィールドを `aws_iam_role` / `aws_s3_bucket` リソース参照に書き換える。
+
 ### 5.2 依存関係解決
 
 - リレーション `Relation{From: instanceID, To: subnetID, Kind: "network"}` がある場合:
   - `attributes["subnet_id"]` を `aws_subnet.<subnet.Name>.id` に置き換える。
 - セキュリティグループの `vpc_security_group_ids` も同様に `aws_security_group.<name>.id` の配列へ変換。
+ - `Relation.Kind == "iam"` の場合:
+   - 例: CodeBuild プロジェクト → IAM ロールの関連から、`serviceRole = aws_iam_role.<role.Name>.arn` のように参照を埋め込む。
+ - `Relation.Kind == "storage"` の場合:
+   - 例: CodeBuild プロジェクト → S3 バケットの関連から、`artifacts { location = aws_s3_bucket.<bucket.Name>.bucket }` 等のフィールドを設定する。
 
 ## 6. 既存ファイルとの関係
 
