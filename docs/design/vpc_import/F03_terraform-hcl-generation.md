@@ -4,7 +4,7 @@
 
 - **対象機能**: F-03 Terraform HCL ファイル生成  
 - **目的**: F-02 で生成された内部 `Resource` / `Relation` モデルをもとに、Terraform の `*.tf` ファイルを所定ディレクトリに生成する。  
-  - ここには、VPC 内リソースだけでなく、**それらに論理的に紐づく IAM ロール / ポリシー、S3 バケット等の関連リソースの HCL 生成**も含まれる。
+  - ここには、VPC 内リソースだけでなく、**それらに論理的に紐づく IAM ロール / ポリシー、S3 バケット、CloudWatch Logs / Alarms、KMS キー、Secrets Manager / SSM パラメータ、ECR リポジトリ、SNS / SQS、WAF Web ACL 等の関連リソースの HCL 生成**も含まれる。
 - **タスク優先度**: 3
 
 ## 2. 対象コンポーネント

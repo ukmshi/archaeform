@@ -51,6 +51,7 @@ type AwsVpcDiscoveryService interface {
     ListEcsServices(vpcID string) ([]Resource, []Relation, error)
     ListElastiCacheClusters(vpcID string) ([]Resource, []Relation, error)
     ListCodeBuildProjects(vpcID string) ([]Resource, []Relation, error)
+    ListLambdaFunctions(vpcID string) ([]Resource, []Relation, error)
     // 以外の VPC 内リソースも、サービスごとに ListXXX を追加していく
 }
 ```
@@ -97,8 +98,9 @@ type awsVpcDiscoveryService struct {
    6. EC2 インスタンス列挙（`DescribeInstances`）
    7. ALB/NLB 列挙（`DescribeLoadBalancers` 等）
    8. RDS インスタンス列挙（`DescribeDBInstances`）
+   9. Lambda（VPC 接続）関数列挙（`ListFunctions` + `GetFunction` 等で VPC 設定をフィルタ）
 4. 取得結果を内部 `Resource` / `Relation` に変換して返却。
-5. VPC 内で検出したリソースの属性から、後続フェーズ（IAM/S3 取得）で利用するための参照情報（IAM ARN, S3 バケット名等）を収集する。
+5. VPC 内で検出したリソースの属性から、後続フェーズ（関連マネージドサービス取得）で利用するための参照情報（IAM ARN, S3 バケット名、ロググループ名、KMS キー ARN、ECR リポジトリ URI、SNS/SQS の ARN 等）を収集する。
 
 #### 5.1.1 対象リソースのスコープ
 
@@ -112,7 +114,7 @@ type awsVpcDiscoveryService struct {
   - VPC 内リソースはサービスごとに `ListXXX` を追加実装しつつ、`Resource` / `Relation` モデルはサービス非依存で扱えるようにする。
   - 新しい VPC 内サービスに対応する際も、`AwsVpcDiscoveryService` のメソッド追加とマッピング・HCL テンプレート追加で拡張できる。
 
-### 5.3 関連マネージドサービス（IAM / S3）向けの情報収集方針
+### 5.3 関連マネージドサービス（IAM / S3 など）向けの情報収集方針
 
 - **IAM 関連**
   - VPC 内リソースのうち、以下のように IAM ロール／ポリシーを参照するものについて、対応する ARN を収集する:
@@ -122,10 +124,28 @@ type awsVpcDiscoveryService struct {
     - CodeBuild: `serviceRole`
   - 収集した ARN は F-02 以降で IAM リソースを import 対象として扱う際の入力となる。
 - **S3 関連**
-  - 初期フェーズでは特に CodeBuild にフォーカスし、以下の項目から S3 バケット名を抽出する:
+  - CodeBuild を中心に、以下の項目から S3 バケット名を抽出する:
     - `artifacts.location`
     - `cache.location`
-  - 将来的には ALB/NLB アクセスログ、CloudTrail ログ等の S3 バケットも対象とする余地を残すが、初期実装では CodeBuild 由来の S3 バケットに限定する。
+  - 将来的には ALB/NLB アクセスログ、CloudTrail ログ等の S3 バケットも対象とする余地を残すが、初期実装から import 対象として扱う前提で、少なくとも参照しているバケット名を収集する。
+
+### 5.4 追加の関連マネージドサービス向け情報収集方針（CloudWatch / KMS / Secrets / ECR / SNS / SQS / WAF 等）
+
+- **CloudWatch Logs / CloudWatch Alarms**
+  - ロググループ:
+    - ECS/EKS タスク定義、Lambda 関数、その他 VPC 内サービスが出力先として指定しているロググループ名を収集する（例: `awslogs-group`、Lambda 関数名からの推測など）。
+  - アラーム:
+    - RDS / EC2 / ELB 等の VPC 内リソースをメトリクスソースとしている CloudWatch アラームの ARN を収集する。
+- **KMS キー**
+  - EBS / RDS / S3 / CodeBuild 等で暗号化キーとして指定されている KMS キー ARN を収集する。
+- **Secrets Manager / SSM Parameter Store**
+  - ECS/EKS タスク定義、Lambda 環境変数等から、参照している Secrets Manager シークレット名や SSM パラメータパスを収集する。
+- **ECR リポジトリ**
+  - ECS/EKS のコンテナ定義に指定されているイメージ URI から、関連する ECR リポジトリ名を抽出する。
+- **SNS トピック / SQS キュー**
+  - Lambda イベントソース、CloudWatch アラームの通知先等として指定されている SNS トピック ARN / SQS キュー ARN を収集する。
+- **WAF Web ACL**
+  - ALB 等にアタッチされている WAF Web ACL の ARN を収集し、VPC 内リソースとの関連付けに利用する。
 
 
 ### 5.2 並列化・ページング戦略

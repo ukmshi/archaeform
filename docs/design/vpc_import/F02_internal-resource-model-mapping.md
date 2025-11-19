@@ -83,6 +83,12 @@ func (m *AwsToResourceMapper) MapInstance(instances []rawInstance) ([]Resource, 
   - `"security"`: セキュリティ関連（インスタンス → セキュリティグループ 等）
   - `"iam"`: IAM ロール／ポリシーとの論理関連（CodeBuild プロジェクト → IAM ロール 等）
   - `"storage"`: S3 等ストレージとの論理関連（CodeBuild プロジェクト → S3 バケット 等）
+  - `"monitoring"`: CloudWatch Logs ロググループ / CloudWatch アラーム等の監視・ログ関連
+  - `"encryption"`: KMS キー等、暗号化設定との関連
+  - `"secret"`: Secrets Manager / SSM Parameter Store 等のシークレット関連
+  - `"artifact"`: ECR リポジトリ等、コンテナイメージやビルド成果物の保管先との関連
+  - `"messaging"`: SNS / SQS 等のメッセージング系サービスとの関連
+  - `"security_l7"`: WAF Web ACL 等、L7 レイヤセキュリティとの関連
 
 ### 5.2 リソース種別ごとの例
 
@@ -105,6 +111,18 @@ func (m *AwsToResourceMapper) MapInstance(instances []rawInstance) ([]Resource, 
   - インスタンス -> サブネット: `kind: "network"`
   - インスタンス -> セキュリティグループ: `kind: "security"`
 
+#### Lambda Function
+
+- `Type`: `"aws_lambda_function"`
+- 主な `Attributes`:
+  - `function_name`, `runtime`, `handler`, `role`, `vpc_config`（`subnet_ids`, `security_group_ids`）、`environment`（環境変数）、`tags` など。
+- `Relation`:
+  - Lambda 関数 -> サブネット / セキュリティグループ: `kind: "network"` / `kind: "security"`
+  - Lambda 関数 -> IAM ロール: `kind: "iam"`
+  - Lambda 関数 -> CloudWatch Logs ロググループ: `kind: "monitoring"`
+  - Lambda 関数 -> Secrets Manager / SSM Parameter: `kind: "secret"`
+  - Lambda 関数 -> SNS / SQS 等のイベントソース / DLQ: `kind: "messaging"`
+
 #### IAM Role / Policy（関連リソース）
 
 - `Type`: `"aws_iam_role"`, `"aws_iam_role_policy"`, `"aws_iam_role_policy_attachment"` など
@@ -121,6 +139,59 @@ func (m *AwsToResourceMapper) MapInstance(instances []rawInstance) ([]Resource, 
   - `bucket`, `acl`, `tags`, 必要に応じてバージョニングや暗号化設定など
 - `Relation`:
   - CodeBuild プロジェクトなど、VPC 内リソースから S3 バケットへの論理関連を `kind: "storage"` として表現。
+
+#### CloudWatch Logs Log Group / CloudWatch Metric Alarm（関連リソース）
+
+- ロググループ（`aws_cloudwatch_log_group`）:
+  - 主な `Attributes`: `name`, `retention_in_days`, `kms_key_id` など
+  - `Relation`:
+    - VPC 内リソース（ECS/EKS タスク定義、Lambda 関数等）からロググループへの関連を `kind: "monitoring"` として表現。
+- メトリアラーム（`aws_cloudwatch_metric_alarm`）:
+  - 主な `Attributes`: `alarm_name`, `metric_name`, `namespace`, `threshold`, `comparison_operator` など
+  - `Relation`:
+    - 監視対象リソース（RDS / EC2 / ELB 等）への関連を `kind: "monitoring"` として表現。
+
+#### KMS Key（関連リソース）
+
+- `Type`: `"aws_kms_key"`
+- 主な `Attributes`:
+  - `key_id`, `description`, `key_usage`, `customer_master_key_spec` など
+- `Relation`:
+  - 暗号化対象リソース（EBS / RDS / S3 / CodeBuild 等）との関連を `kind: "encryption"` として表現。
+
+#### Secrets Manager / SSM Parameter Store（関連リソース）
+
+- Secrets Manager（`aws_secretsmanager_secret`）:
+  - 主な `Attributes`: `name`, `description`, `kms_key_id`, `tags` 等
+- SSM Parameter（`aws_ssm_parameter`）:
+  - 主な `Attributes`: `name`, `type`, `key_id` 等
+- `Relation`:
+  - これらを参照する VPC 内リソース（ECS/EKS タスク定義、Lambda 等）との関連を `kind: "secret"` として表現。
+
+#### ECR Repository（関連リソース）
+
+- `Type`: `"aws_ecr_repository"`
+- 主な `Attributes`:
+  - `name`, `image_tag_mutability`, `image_scanning_configuration` など
+- `Relation`:
+  - コンテナイメージを利用する VPC 内リソース（ECS/EKS 等）との関連を `kind: "artifact"` として表現。
+
+#### SNS Topic / SQS Queue（関連リソース）
+
+- SNS トピック（`aws_sns_topic`） / SQS キュー（`aws_sqs_queue`）
+- 主な `Attributes`:
+  - SNS: `name`, `display_name`, `kms_master_key_id` 等
+  - SQS: `name`, `visibility_timeout_seconds`, `message_retention_seconds` 等
+- `Relation`:
+  - Lambda イベントソースや CloudWatch アラーム通知先等との関連を `kind: "messaging"` として表現。
+
+#### WAF Web ACL（関連リソース）
+
+- `Type`: `"aws_wafv2_web_acl"`
+- 主な `Attributes`:
+  - `name`, `scope`, `default_action`, `rule` 等
+- `Relation`:
+  - ALB 等の VPC 内リソースに対するアタッチ関係を `kind: "security_l7"` として表現。
 
 ## 6. 名前生成戦略 (`NameGenerator`)
 
@@ -141,7 +212,7 @@ type NameGenerator interface {
 
 1. F-01 から受け取った各種中間構造体（または AWS SDK レスポンス）を入力として受け取る。
 2. リソース種別ごとに対応する `MapXXX` 関数を呼び出し、`[]Resource` / `[]Relation` を構築。
-3. VPC 内リソースから参照されている IAM ARN, S3 バケット名等の情報を用いて、関連 IAM / S3 リソース用の `Resource` / `Relation` も生成する。
+3. VPC 内リソースから参照されている IAM ARN, S3 バケット名、ロググループ名、KMS キー ARN、Secrets/SSM 名、ECR リポジトリ URI、SNS/SQS ARN、WAF Web ACL ARN 等の情報を用いて、関連マネージドサービス用の `Resource` / `Relation` も生成する。
 4. 全リソース分をマージし、重複しない `ID` を保証する。
 5. マッピング中にエラーがあった場合、
    - 個別リソースの変換失敗は WARN ログ出力の上でスキップ。
