@@ -9,7 +9,8 @@
 
 - **前提**  
   - 初期ターゲットクラウドは AWS（VPC = AWS VPC）を想定し、将来的に他クラウド（GCP VPC, Azure Virtual Network 等）に拡張可能な設計とする。  
-  - Terraform は OSS 版を想定し、0.13 以降の一般的な構成／状態ファイルを対象とする。
+  - Terraform は OSS 版を想定し、0.13 以降の一般的な構成／状態ファイルを対象とする。  
+  - VPC import CLI は **Terraform workspace の state が空であること**を前提とし、`terraform state list` などで 1 件以上のリソースが存在する workspace での import はサポートしない（その場合はエラー終了とする）。
 
 ### 2. 機能要件
 
@@ -23,10 +24,10 @@
     - サブネット, ルートテーブル, IGW/NATGW, セキュリティグループ, EC2, ALB/NLB, RDS 等（段階的に拡張）
   - 各リソースを内部の抽象リソースモデルにマッピング
   - Terraform 用の HCL ファイルを生成（`*.tf`）  
-    - 既存 Terraform ディレクトリがある場合は、重複・競合を検出しつつ追記 or 分割ファイルで追加
+    - 基本的には **空の state を持つ新規 workspace 向けに HCL を生成**する（既存 Terraform プロジェクトとの安全なマージは将来拡張とする）
   - `terraform import` コマンド列を生成
     - デフォルトは「コマンドスクリプト生成のみ」  
-    - `--apply` 指定時は Terraform CLI をサブプロセスとして起動し、自動 import（ユーザーに dry-run を推奨）
+    - `--apply` 指定時は Terraform CLI をサブプロセスとして起動し、自動 import（このとき state が空でない場合はエラーとして import を実行しない）
   - 生成内容（HCL / import スクリプト）のサマリを出力
 - **出力**
   - `--tf-dir` 配下の `.tf` ファイル群
@@ -220,12 +221,14 @@
 #### 7.1 VPC import フロー
 
 1. ユーザーが `archae-vpc-import --vpc-id vpc-xxxx --region ap-northeast-1 --tf-dir ./infra` を実行。  
-2. CLI が設定を解析し、`AwsVpcDiscoveryService` を通じて AWS API からリソース一覧を取得。  
-3. 取得したリソースを内部 Resource / Relation モデルに変換。  
-4. `ExistingConfigAnalyzer` が `./infra` の既存 `.tf` を解析し、重複や競合をチェック。  
-5. `HclGenerator` が新規 or 追記用の HCL ファイルを生成し、`./infra/generated` 等へ出力。  
-6. `ImportCommandGenerator` が import コマンドスクリプトを生成（`--apply` 指定時はその場で実行）。  
-7. サマリを出力し、ユーザーにレビューと `terraform plan` 実行を促す。
+2. CLI が設定を解析し、`--tf-dir` に対応する Terraform workspace の state を確認する（`terraform state list` など）。  
+   - 1 件以上のリソースが存在する場合は、VPC import 処理を行わずエラー終了とし、ユーザーに「空の state 専用ツール」である旨をメッセージとして伝える。  
+3. state が空であることを確認できた場合にのみ、`AwsVpcDiscoveryService` を通じて AWS API からリソース一覧を取得。  
+4. 取得したリソースを内部 Resource / Relation モデルに変換。  
+5. `ExistingConfigAnalyzer` が `./infra` の既存 `.tf` を解析し、重複や競合をチェック（初期バージョンでは主に警告用途）。  
+6. `HclGenerator` が新規用の HCL ファイルを生成し、`./infra/generated` 等へ出力。  
+7. `ImportCommandGenerator` が import コマンドスクリプトを生成（`--apply` 指定時はその場で実行）。  
+8. サマリを出力し、ユーザーにレビューと `terraform plan` 実行を促す。
 
 #### 7.2 Terraform 可視化フロー
 

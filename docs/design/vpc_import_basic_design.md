@@ -7,8 +7,8 @@
   - システム設計書（`system_design.md`）のうち、「2.1 VPC 内リソース自動 import CLI」を対象とする。
 
 - **目的**  
-  - 指定された AWS VPC 内の既存クラウドリソースを走査し、Terraform 管理下へ取り込むための HCL ファイルおよび `terraform import` コマンドスクリプトを自動生成できるようにする。  
-  - 既存の Terraform 構成ディレクトリがある場合でも、競合を検知しつつ安全に追加できる仕組みを提供する。  
+  - 指定された AWS VPC 内の既存クラウドリソースを走査し、**空の Terraform state を前提とした新規 workspace** に対して、Terraform 管理下へ取り込むための HCL ファイルおよび `terraform import` コマンドスクリプトを自動生成できるようにする。  
+  - 既存の Terraform プロジェクトとの安全な統合（既にリソースが登録された state を持つ workspace への import）は、初期バージョンでは対象外とし、将来の拡張として検討する。  
   - **VPC 内に配置されたリソースに「論理的に関連する外部マネージドサービス」も、必要に応じて import 対象とする**ことで、実運用上意味のある単位で Terraform 管理下へ移行できるようにする。  
     - 例: IAM ロール / ポリシー、S3 バケット、CloudWatch Logs ロググループ / CloudWatch アラーム、KMS キー、Secrets Manager シークレット / SSM パラメータ、ECR リポジトリ、SNS トピック / SQS キュー、WAF Web ACL 等  
   - 将来的な他クラウド対応（GCP, Azure 等）を見据え、内部の抽象リソースモデルとインターフェースを共通化する。
@@ -19,7 +19,9 @@
   - 初期ターゲットは AWS の VPC 環境。  
   - Terraform CLI はあらかじめインストール済みであること（バージョンは 0.13 以降を想定）。  
   - AWS 認証情報は AWS SDK の標準クレデンシャルプロバイダチェーンまたは `--profile` により取得可能であること。  
-  - 対象 VPC ID とリージョンが一意に指定可能であること。
+  - 対象 VPC ID とリージョンが一意に指定可能であること。  
+  - **VPC import CLI が利用する Terraform workspace の state は空であること**（`terraform state list` に 1 件もリソースが存在しない、または state ファイル自体が存在しない状態）。  
+    - Import 処理開始時に state 内容を確認し、1 件以上のリソースが存在する場合は処理を行わずエラー終了（終了コード 1）とする。
 
 - **対応 OS**
   - macOS（優先）、Linux。  
@@ -45,11 +47,11 @@
 
 - **F-03: Terraform HCL ファイル生成**
   - 内部リソースモデルから Terraform の `*.tf` ファイルを生成し、指定ディレクトリ配下（例: `--tf-dir/generated`）に出力する。  
-  - 既存 Terraform ディレクトリがある場合、競合検出結果に基づき、新規定義のみを追加する。
+  - 初期バージョンでは **空の state を前提とした新規 workspace 向けの HCL 生成**にフォーカスし、既存 Terraform プロジェクトとの本格的なマージは将来拡張とする。
 
 - **F-04: 既存 Terraform 構成の解析・競合検出**
   - `--tf-dir` 配下の既存 `.tf` を解析し、既に定義済みのリソースと import 対象リソースの重複を検知する。  
-  - 競合がある場合は当該リソースをスキップし、警告を出力する。
+  - 初期バージョンでは Terraform state が空であることを前提とするため、致命的な競合解消までは行わず、主に警告や将来の拡張のための解析基盤として扱う。
 
 - **F-05: `terraform import` コマンドスクリプト生成**
   - 各リソースについて `terraform import 'aws_instance.example' 'i-xxxx'` 形式のコマンド列を生成し、シェルスクリプト（例: `import.sh`）として出力する。
