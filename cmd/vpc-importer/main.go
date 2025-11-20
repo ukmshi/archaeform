@@ -64,13 +64,19 @@ func main() {
 		os.Exit(1)
 	}
 
-	// TODO: resFilter のパースを実装し、terraform.ResourceFilter へ変換する。
-	_ = resFilter
-
 	scope := terraform.DiscoveryScope{
 		VpcID:   vpcID,
 		Region:  region,
 		Profile: profile,
+	}
+
+	if resFilter != "" {
+		f, err := terraform.ParseResourceFilter(resFilter)
+		if err != nil {
+			logger.Errorf("invalid --resource-filters value: %v", err)
+			os.Exit(1)
+		}
+		scope.ResourceFilters = []terraform.ResourceFilter{f}
 	}
 
 	// TODO: 実際の AWS SDK クライアント実装を差し込む。
