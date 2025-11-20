@@ -11,13 +11,28 @@ const (
 )
 
 // RelationKind はリソース間の関係種別を表す。
+// F-02 詳細設計の分類に対応しつつ、共通的な depends_on / contains も保持する。
 type RelationKind string
 
 const (
 	RelationDependsOn RelationKind = "depends_on"
-	RelationNetwork   RelationKind = "network"
-	RelationSecurity  RelationKind = "security"
-	RelationContains  RelationKind = "contains"
+
+	// ネットワーク・セキュリティ系
+	RelationNetwork   RelationKind = "network"    // サブネット -> VPC, ENI -> サブネット など
+	RelationSecurity  RelationKind = "security"   // インスタンス -> セキュリティグループ など
+	RelationSecurityL7 RelationKind = "security_l7" // WAF Web ACL -> ALB など
+
+	// IAM / ストレージ / 監視・暗号化・シークレット等
+	RelationIAM        RelationKind = "iam"        // IAM ロール / ポリシー関連
+	RelationStorage    RelationKind = "storage"    // S3 などストレージ関連
+	RelationMonitoring RelationKind = "monitoring" // CloudWatch Logs / アラームなど
+	RelationEncryption RelationKind = "encryption" // KMS キー関連
+	RelationSecret     RelationKind = "secret"     // Secrets Manager / SSM Parameter 等
+	RelationArtifact   RelationKind = "artifact"   // ECR リポジトリ等
+	RelationMessaging  RelationKind = "messaging"  // SNS / SQS 等
+
+	// 包含関係（モジュール・ VPC 内含有など）
+	RelationContains RelationKind = "contains"
 )
 
 // Resource はクラウド / Terraform 双方で利用する共通リソースモデル。
