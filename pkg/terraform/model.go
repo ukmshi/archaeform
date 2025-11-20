@@ -18,8 +18,8 @@ const (
 	RelationDependsOn RelationKind = "depends_on"
 
 	// ネットワーク・セキュリティ系
-	RelationNetwork   RelationKind = "network"    // サブネット -> VPC, ENI -> サブネット など
-	RelationSecurity  RelationKind = "security"   // インスタンス -> セキュリティグループ など
+	RelationNetwork   RelationKind = "network"      // サブネット -> VPC, ENI -> サブネット など
+	RelationSecurity  RelationKind = "security"     // インスタンス -> セキュリティグループ など
 	RelationSecurityL7 RelationKind = "security_l7" // WAF Web ACL -> ALB など
 
 	// IAM / ストレージ / 監視・暗号化・シークレット等
@@ -34,6 +34,10 @@ const (
 	// 包含関係（モジュール・ VPC 内含有など）
 	RelationContains RelationKind = "contains"
 )
+
+// HCLExpression は Terraform HCL 内で生の式として扱いたい値を表すための型。
+// HclGenerator などで、この型の値はクォートせずにそのまま埋め込まれる。
+type HCLExpression string
 
 // Resource はクラウド / Terraform 双方で利用する共通リソースモデル。
 // system_design.md / vpc_import_basic_design.md に記載のフィールド構成に対応する。
