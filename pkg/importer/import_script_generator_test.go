@@ -2,7 +2,6 @@ package importer
 
 import (
 	"os"
-	"path/filepath"
 	"strings"
 	"testing"
 
